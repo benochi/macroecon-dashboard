@@ -5,6 +5,7 @@ from config import DB_PATH, FRED_SERIES
 import altair as alt
 import seaborn as sns
 import matplotlib.pyplot as plt
+from charts import make_indicator_chart
 
 st.set_page_config(page_title="Macroeconomic Dashboard", layout="wide")
 
@@ -45,10 +46,32 @@ sp500_df = load_data("sp500")
 if not macro_df.empty and not sp500_df.empty:
     merged = pd.merge(macro_df, sp500_df, on="date", how="inner", suffixes=("_macro", "_sp500"))
 
-    st.line_chart(
-        data=merged.set_index("date")[["value_macro", "value_sp500"]],
-        use_container_width=True
+    st.subheader(f"{selected_series} vs. S&P 500")
+    first_scale_type = st.radio(
+        "Scale Type (Single Indicator)", ["Raw", "Log", "Z-Score"], key="single_chart_scale"
     )
+
+    first_df = merged.copy()
+    if first_scale_type == "Log":
+        for col in ["value_macro", "value_sp500"]:
+            first_df[col] = first_df[col].apply(lambda x: x if x > 0 else None)
+    elif first_scale_type == "Z-Score":
+        for col in ["value_macro", "value_sp500"]:
+            mean = first_df[col].mean()
+            std = first_df[col].std()
+            first_df[col] = (first_df[col] - mean) / std
+
+    line_chart = alt.Chart(first_df.dropna()).mark_line().encode(
+        x="date:T",
+        y=alt.Y("value_macro:Q", title=selected_series),
+        color=alt.value("#1f77b4")
+    ) + alt.Chart(first_df.dropna()).mark_line().encode(
+        x="date:T",
+        y=alt.Y("value_sp500:Q", title="S&P 500"),
+        color=alt.value("#ff7f0e")
+    )
+
+    st.altair_chart(line_chart, use_container_width=True)
 
     # --- Multi-Line Chart: All Indicators vs. S&P 500 ---
     st.subheader("Full Comparison: S&P 500 and Macroeconomic Indicators")
@@ -92,13 +115,7 @@ if not macro_df.empty and not sp500_df.empty:
 
     y_scale = alt.Scale(type="log") if scale_type == "Log" else alt.Scale(type="linear")
 
-    chart = alt.Chart(long_df).mark_line().encode(
-        x="date:T",
-        y=alt.Y("value:Q", scale=y_scale),
-        color="indicator:N",
-        tooltip=["date:T", "indicator:N", "value:Q"]
-    ).interactive()
-
+    chart = make_indicator_chart(long_df, scale_type)
     st.altair_chart(chart, use_container_width=True)
 
     # --- Correlation Heatmap ---
@@ -107,7 +124,17 @@ if not macro_df.empty and not sp500_df.empty:
     corr = full.drop(columns=["date"]).corr(method="pearson")
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    sns.heatmap(corr[["sp500"]].T, annot=True, cmap="coolwarm", ax=ax)
+    sns.heatmap(
+        corr[["sp500"]].T,
+        annot=True,
+        cmap="cividis",  # colorblind-friendly
+        cbar_kws={"label": "Correlation"},
+        annot_kws={"size": 10, "weight": "bold"},
+        linewidths=0.5,
+        linecolor="black",
+        ax=ax
+    )
+    ax.set_title("Correlation of S&P 500 with Other Indicators", fontsize=14)
     st.pyplot(fig)
 
 else:
